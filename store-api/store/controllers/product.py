@@ -32,8 +32,8 @@ async def get(
 @router.get(path="/", status_code=status.HTTP_200_OK)
 async def query(
     usecase: ProductUsecase = Depends(),
-    min_price: float = Query(default=None, gt=0),
-    max_price: float = Query(default=None, gt=0)
+    min_price: float = Query(default=5000, gt=0),
+    max_price: float = Query(default=8000, gt=0)
 ) -> List[ProductOut]:
     return await usecase.query(min_price=min_price, max_price=max_price)
 
