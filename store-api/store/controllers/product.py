@@ -49,7 +49,7 @@ async def patch(
     except NotFoundException as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message)
 
-
+@router.update(path="/{id}", status_code=status.HTTP_200_OK)
 async def update(self, id: UUID, body: ProductUpdate) -> ProductUpdateOut:
         # Atualiza a data de updated_at para o tempo atual
         update_data = body.model_dump(exclude_none=True)
