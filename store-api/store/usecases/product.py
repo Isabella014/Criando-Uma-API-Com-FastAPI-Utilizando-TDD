@@ -1,59 +1,72 @@
-from typing import List
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
-from pydantic import UUID4
-from store.core.exceptions import NotFoundException, InsertionError
+from typing import List, Optional
+from uuid import UUID
+from datetime import datetime
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+import pymongo
+from store.db.mongo import db_client
+from store.models.product import ProductModel
 from store.schemas.product import ProductIn, ProductOut, ProductUpdate, ProductUpdateOut
-from store.usecases.product import ProductUsecase
-
-router = APIRouter(tags=["products"])
+from store.core.exceptions import NotFoundException, InsertionError
 
 
-@router.post(path="/", status_code=status.HTTP_201_CREATED)
-async def post(
-    body: ProductIn = Body(...), usecase: ProductUsecase = Depends()
-) -> ProductOut:
-    try:
-        return await usecase.create(body=body)
-    except InsertionError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.message)
+class ProductUsecase:
+    def __init__(self) -> None:
+        self.client: AsyncIOMotorClient = db_client.get()
+        self.database: AsyncIOMotorDatabase = self.client.get_database()
+        self.collection = self.database.get_collection("products")
+
+    async def create(self, body: ProductIn) -> ProductOut:
+        try:
+            product_model = ProductModel(**body.model_dump())
+            await self.collection.insert_one(product_model.model_dump())
+            return ProductOut(**product_model.model_dump())
+        except Exception as e:
+            raise InsertionError(message=str(e))
+
+    async def get(self, id: UUID) -> ProductOut:
+        result = await self.collection.find_one({"id": id})
+
+        if not result:
+            raise NotFoundException(message=f"Product not found with filter: {id}")
+
+        return ProductOut(**result)
+
+    async def query(self, min_price: Optional[float] = None, max_price: Optional[float] = None) -> List[ProductOut]:
+        filter_query = {}
+        if min_price is not None:
+            filter_query["price"] = {"$gt": min_price}
+        if max_price is not None:
+            if "price" in filter_query:
+                filter_query["price"]["$lt"] = max_price
+            else:
+                filter_query["price"] = {"$lt": max_price}
+
+        return [ProductOut(**item) async for item in self.collection.find(filter_query)]
+
+    async def update(self, id: UUID, body: ProductUpdate) -> ProductUpdateOut:
+        # Atualiza a data de updated_at para o tempo atual
+        update_data = body.model_dump(exclude_none=True)
+        update_data["updated_at"] = datetime.utcnow()
+
+        result = await self.collection.find_one_and_update(
+            filter={"id": id},
+            update={"$set": update_data},
+            return_document=pymongo.ReturnDocument.AFTER,
+        )
+
+        if not result:
+            raise NotFoundException(message=f"Product not found with filter: {id}")
+
+        return ProductUpdateOut(**result)
+
+    async def delete(self, id: UUID) -> bool:
+        product = await self.collection.find_one({"id": id})
+        if not product:
+            raise NotFoundException(message=f"Product not found with filter: {id}")
+
+        result = await self.collection.delete_one({"id": id})
+
+        return True if result.deleted_count > 0 else False
 
 
-@router.get(path="/{id}", status_code=status.HTTP_200_OK)
-async def get(
-    id: UUID4 = Path(alias="id"), usecase: ProductUsecase = Depends()
-) -> ProductOut:
-    try:
-        return await usecase.get(id=id)
-    except NotFoundException as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message)
-
-
-@router.get(path="/", status_code=status.HTTP_200_OK)
-async def query(
-    usecase: ProductUsecase = Depends(),
-    min_price: float = Query(default=None, gt=0),
-    max_price: float = Query(default=None, gt=0)
-) -> List[ProductOut]:
-    return await usecase.query(min_price=min_price, max_price=max_price)
-
-
-@router.patch(path="/{id}", status_code=status.HTTP_200_OK)
-async def patch(
-    id: UUID4 = Path(alias="id"),
-    body: ProductUpdate = Body(...),
-    usecase: ProductUsecase = Depends(),
-) -> ProductUpdateOut:
-    try:
-        return await usecase.update(id=id, body=body)
-    except NotFoundException as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message)
-
-
-@router.delete(path="/{id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete(
-    id: UUID4 = Path(alias="id"), usecase: ProductUsecase = Depends()
-) -> None:
-    try:
-        await usecase.delete(id=id)
-    except NotFoundException as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.message)
+product_usecase = ProductUsecase()
