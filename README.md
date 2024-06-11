@@ -18,7 +18,6 @@ Este projeto é uma API para gerenciar produtos, construída com [FastAPI](https
   }
 - Response Body:
 ```json
-Copiar código
 {
   "id": "UUID",
   "name": "Nome do Produto",
